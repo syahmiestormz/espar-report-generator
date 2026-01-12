@@ -27,118 +27,73 @@ def extract_course_code(filename):
         return match.group(1)
     return "Unknown_Course"
 
-def load_file(uploaded_file):
-    """Reads CSV or Excel file into a dataframe or returns raw content for parsing."""
-    fname = uploaded_file.name
-    if fname.endswith('.xlsx'):
+def find_val_in_df(df, keyword):
+    """Searches a dataframe for a keyword and returns the cell coordinates."""
+    for r_idx, row in df.iterrows():
+        row_str = row.astype(str).str.cat(sep=' ')
+        if keyword in row_str:
+            return r_idx
+    return -1
+
+def extract_dashboard_metrics(df):
+    """Extracts stats from a dataframe that looks like the Dashboard."""
+    total_students = 0
+    pass_rate = 0
+    
+    # Locate header row containing 'Total Students'
+    header_row = find_val_in_df(df, "Total Students")
+    
+    if header_row != -1:
+        # Reload/Slice with correct header
         try:
-            return pd.read_excel(uploaded_file, header=None) # Read raw first
-        except Exception as e:
-            st.error(f"Error reading Excel {fname}: {e}")
-            return None
-    else:
-        # For CSV, we might need raw text parsing or pandas reading
-        return uploaded_file
-
-def parse_dashboard(file, is_excel=False, excel_df=None):
-    """Extracts Pass Rate and Student Count from Dashboard."""
-    try:
-        total_students = 0
-        pass_rate = 0
-        
-        if is_excel and excel_df is not None:
-            # Iterate through rows to find "Total Students"
-            df = excel_df
-            header_row = -1
-            # Search for header in first few columns/rows
-            for r_idx, row in df.iterrows():
-                row_str = row.astype(str).str.cat(sep=' ')
-                if "Total Students" in row_str and "Pass Rate" in row_str:
-                    header_row = r_idx
-                    break
+            # Set new header
+            df.columns = df.iloc[header_row]
+            df = df.iloc[header_row+1:].reset_index(drop=True)
+            df = df.dropna(subset=['Total Students'])
             
-            if header_row != -1:
-                # Reload with correct header
-                df.columns = df.iloc[header_row]
-                df = df.iloc[header_row+1:].reset_index(drop=True)
-                df = df.dropna(subset=['Total Students'])
+            if not df.empty:
+                val_stud = df['Total Students'].iloc[0]
+                total_students = pd.to_numeric(val_stud, errors='coerce')
                 
-                if not df.empty:
-                    total_students = pd.to_numeric(df['Total Students'].iloc[0], errors='coerce')
-                    # Find Pass Rate col
-                    pass_col = [c for c in df.columns if "Pass Rate" in str(c)]
-                    if pass_col:
-                        raw_rate = df[pass_col[0]].iloc[0]
-                        pass_rate = pd.to_numeric(raw_rate, errors='coerce')
-                        if pd.notna(pass_rate):
-                            if pass_rate <= 1.0: pass_rate *= 100
-                            return total_students, pass_rate
-
-        else: # CSV Processing
-            content = file.getvalue().decode('utf-8', errors='ignore')
-            lines = content.split('\n')
+                # Find Pass Rate column (sometimes named differently)
+                pass_cols = [c for c in df.columns if "Pass Rate" in str(c)]
+                if pass_cols:
+                    val_rate = df[pass_cols[0]].iloc[0]
+                    raw_rate = pd.to_numeric(val_rate, errors='coerce')
+                    if pd.notna(raw_rate):
+                        if raw_rate <= 1.0: 
+                            pass_rate = raw_rate * 100
+                        else:
+                            pass_rate = raw_rate
+                            
+                return total_students, pass_rate
+        except Exception as e:
+            print(f"Error extracting metrics: {e}")
             
-            header_row = -1
-            for i, line in enumerate(lines):
-                if "Total Students" in line and "Pass Rate" in line:
-                    header_row = i
-                    break
-            
-            if header_row != -1:
-                file.seek(0)
-                df = pd.read_csv(file, skiprows=header_row)
-                df = df.dropna(subset=['Total Students']).reset_index(drop=True)
-                if not df.empty:
-                    total_students = pd.to_numeric(df['Total Students'].iloc[0], errors='coerce')
-                    pass_col = [c for c in df.columns if "Pass Rate" in c]
-                    if pass_col:
-                        raw_rate = df[pass_col[0]].iloc[0]
-                        pass_rate = pd.to_numeric(raw_rate, errors='coerce')
-                        if pd.notna(pass_rate):
-                            if pass_rate <= 1.0: pass_rate *= 100
-                            return total_students, pass_rate
-
-    except Exception as e:
-        print(f"Error parsing dashboard: {e}")
     return 0, 0
 
-def parse_plo(file, is_excel=False, excel_df=None):
-    """Extracts PLO scores from Table 3."""
+def extract_plo_metrics(df):
+    """Extracts PLO scores from a dataframe that looks like Table 3."""
     plo_scores = {}
-    try:
-        df = None
-        if is_excel and excel_df is not None:
-             # Find header row
-            raw_df = excel_df
-            header_row = -1
-            for r_idx, row in raw_df.iterrows():
-                row_str = row.astype(str).str.cat(sep=' ')
-                if "PLO 1" in row_str or "PLO1" in row_str:
-                    header_row = r_idx
-                    break
+    
+    # Locate header row containing 'PLO 1'
+    # Check simple search
+    header_row = -1
+    for r_idx, row in df.iterrows():
+        row_str = row.astype(str).str.cat(sep=' ')
+        if "PLO 1" in row_str or "PLO1" in row_str:
+            header_row = r_idx
+            break
             
-            if header_row != -1:
-                raw_df.columns = raw_df.iloc[header_row]
-                df = raw_df.iloc[header_row+1:].reset_index(drop=True)
-                
-        else: # CSV
-            content = file.getvalue().decode('utf-8', errors='ignore')
-            lines = content.split('\n')
-            header_row = -1
-            for i, line in enumerate(lines):
-                if "PLO 1" in line or "PLO1" in line:
-                    header_row = i
-                    break
-            if header_row != -1:
-                file.seek(0)
-                df = pd.read_csv(file, skiprows=header_row)
-
-        if df is not None:
-            # Find Achievement Row
+    if header_row != -1:
+        try:
+            df.columns = df.iloc[header_row]
+            df = df.iloc[header_row+1:].reset_index(drop=True)
+            
+            # Find the 'Achievement' or 'Average' row
             target_row = None
-            
-            # Check first column for label
             first_col = df.columns[0]
+            
             for idx, val in df[first_col].items():
                 if isinstance(val, str) and ("Achievement" in val or "Average" in val):
                     target_row = df.iloc[idx]
@@ -155,9 +110,9 @@ def parse_plo(file, is_excel=False, excel_df=None):
                                 plo_scores[clean_plo] = val
                         except:
                             pass
-
-    except Exception as e:
-        print(f"Error parsing PLO: {e}")
+        except Exception as e:
+            print(f"Error extracting PLO: {e}")
+            
     return plo_scores
 
 # --- Main App Interface ---
@@ -165,11 +120,10 @@ def parse_plo(file, is_excel=False, excel_df=None):
 st.title("📊 ESPAR Report Generator")
 st.markdown("""
 **Instructions:**
-1. Drag and drop all your semester files (CSV or Excel) here.
+1. Drag and drop all your semester **Excel (.xlsx)** or **CSV** files here.
 2. The app will group them by course code and generate the report text.
 """)
 
-# UPDATED: Accept 'xlsx' now
 uploaded_files = st.file_uploader("Upload Course Files", accept_multiple_files=True, type=['csv', 'xlsx'])
 
 if uploaded_files:
@@ -183,24 +137,65 @@ if uploaded_files:
             course_data[code] = {'students': 0, 'pass_rate': 0, 'plo': {}, 'has_dashboard': False}
             
         fname = uploaded_file.name
-        is_excel = fname.endswith('.xlsx')
         
-        # Helper: Read excel once if needed
-        excel_df = None
-        if is_excel:
-            excel_df = load_file(uploaded_file)
-
-        if "Dashboard" in fname or "CRR" in fname:
-            students, rate = parse_dashboard(uploaded_file, is_excel, excel_df)
-            if students > 0 or rate > 0:
-                course_data[code]['students'] = students
-                course_data[code]['pass_rate'] = rate
-                course_data[code]['has_dashboard'] = True
+        # === EXCEL WORKBOOK LOGIC (The Fix) ===
+        if fname.endswith('.xlsx'):
+            try:
+                # Read ALL sheets
+                xls = pd.read_excel(uploaded_file, sheet_name=None, header=None)
                 
-        elif "Table 3" in fname or "PLO" in fname:
-            if not is_excel: uploaded_file.seek(0)
-            plos = parse_plo(uploaded_file, is_excel, excel_df)
-            course_data[code]['plo'] = plos
+                # 1. Find Dashboard Sheet
+                dash_df = None
+                for sheet_name, sheet_df in xls.items():
+                    if "Dashboard" in sheet_name or "CRR" in sheet_name:
+                        dash_df = sheet_df
+                        break
+                
+                if dash_df is not None:
+                    studs, rate = extract_dashboard_metrics(dash_df)
+                    if studs > 0:
+                        course_data[code]['students'] = studs
+                        course_data[code]['pass_rate'] = rate
+                        course_data[code]['has_dashboard'] = True
+                        
+                # 2. Find PLO Sheet
+                plo_df = None
+                for sheet_name, sheet_df in xls.items():
+                    if "Table 3" in sheet_name or "PLO" in sheet_name:
+                        plo_df = sheet_df
+                        break
+                
+                if plo_df is not None:
+                    plos = extract_plo_metrics(plo_df)
+                    if plos:
+                        course_data[code]['plo'].update(plos)
+
+            except Exception as e:
+                st.error(f"Error reading Excel file {fname}: {e}")
+
+        # === CSV LOGIC (Legacy Support) ===
+        else: 
+            # If "Dashboard" in filename...
+            if "Dashboard" in fname or "CRR" in fname:
+                try:
+                    df = pd.read_csv(uploaded_file, header=None)
+                    studs, rate = extract_dashboard_metrics(df)
+                    if studs > 0:
+                        course_data[code]['students'] = studs
+                        course_data[code]['pass_rate'] = rate
+                        course_data[code]['has_dashboard'] = True
+                except:
+                    pass
+            # If "Table 3" in filename...
+            elif "Table 3" in fname or "PLO" in fname:
+                try:
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, header=None)
+                    plos = extract_plo_metrics(df)
+                    if plos:
+                        course_data[code]['plo'].update(plos)
+                except:
+                    pass
 
     # 2. Aggregation Logic
     df_courses = []
@@ -273,9 +268,11 @@ if uploaded_files:
 
     with col2:
         st.subheader("Course Breakdown")
-        st.dataframe(results_df.style.format({"Pass Rate": "{:.1f}%", "Fail Rate": "{:.1f}%"}), use_container_width=True)
-        
-        high_fail_df = results_df[results_df['Fail Rate'] > 15]
+        if not results_df.empty:
+            st.dataframe(results_df.style.format({"Pass Rate": "{:.1f}%", "Fail Rate": "{:.1f}%"}), use_container_width=True)
+            high_fail_df = results_df[results_df['Fail Rate'] > 15]
+        else:
+            high_fail_df = pd.DataFrame()
         
     # --- REPORT GENERATION SECTION ---
     
@@ -295,9 +292,10 @@ if uploaded_files:
         best_plo = max(plo_averages, key=plo_averages.get)
         strength_text = f"Students performed best in **{best_plo}** (Average: {plo_averages[best_plo]:.1f}%), indicating strong achievement in this domain."
         
-    full_pass_courses = results_df[results_df['Pass Rate'] == 100]['Course Code'].tolist()
-    if full_pass_courses:
-        strength_text += f" Additionally, a **100% pass rate** was recorded in subjects such as {', '.join(full_pass_courses[:3])}."
+    if not results_df.empty:
+        full_pass_courses = results_df[results_df['Pass Rate'] == 100]['Course Code'].tolist()
+        if full_pass_courses:
+            strength_text += f" Additionally, a **100% pass rate** was recorded in subjects such as {', '.join(full_pass_courses[:3])}."
 
     if not high_fail_df.empty:
         failed_list = [f"{row['Course Code']} ({row['Fail Rate']:.1f}% Fail)" for _, row in high_fail_df.iterrows()]
