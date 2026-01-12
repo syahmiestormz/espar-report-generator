@@ -40,13 +40,10 @@ def extract_dashboard_metrics(df):
     total_students = 0
     pass_rate = 0
     
-    # Locate header row containing 'Total Students'
     header_row = find_val_in_df(df, "Total Students")
     
     if header_row != -1:
-        # Reload/Slice with correct header
         try:
-            # Set new header
             df.columns = df.iloc[header_row]
             df = df.iloc[header_row+1:].reset_index(drop=True)
             df = df.dropna(subset=['Total Students'])
@@ -55,7 +52,6 @@ def extract_dashboard_metrics(df):
                 val_stud = df['Total Students'].iloc[0]
                 total_students = pd.to_numeric(val_stud, errors='coerce')
                 
-                # Find Pass Rate column (sometimes named differently)
                 pass_cols = [c for c in df.columns if "Pass Rate" in str(c)]
                 if pass_cols:
                     val_rate = df[pass_cols[0]].iloc[0]
@@ -76,8 +72,6 @@ def extract_plo_metrics(df):
     """Extracts PLO scores from a dataframe that looks like Table 3."""
     plo_scores = {}
     
-    # Locate header row containing 'PLO 1'
-    # Check simple search
     header_row = -1
     for r_idx, row in df.iterrows():
         row_str = row.astype(str).str.cat(sep=' ')
@@ -90,7 +84,6 @@ def extract_plo_metrics(df):
             df.columns = df.iloc[header_row]
             df = df.iloc[header_row+1:].reset_index(drop=True)
             
-            # Find the 'Achievement' or 'Average' row
             target_row = None
             first_col = df.columns[0]
             
@@ -115,6 +108,48 @@ def extract_plo_metrics(df):
             
     return plo_scores
 
+def extract_cqi_issues(df):
+    """Extracts user-entered CQI issues from Table 2 - CLO Analysis."""
+    cqi_list = [] # [{'issue': '...', 'action': '...', 'evidence': '...'}, ...]
+    
+    # Locate header row containing 'Issue' and 'Suggestion'
+    header_row = -1
+    for r_idx, row in df.iterrows():
+        row_str = row.astype(str).str.cat(sep=' ')
+        if "Issue" in row_str and "Suggestion" in row_str:
+            header_row = r_idx
+            break
+            
+    if header_row != -1:
+        try:
+            df.columns = df.iloc[header_row]
+            df = df.iloc[header_row+1:].reset_index(drop=True)
+            
+            # Identify columns
+            col_issue = [c for c in df.columns if "Issue" in str(c)][0]
+            col_action = [c for c in df.columns if "Suggestion" in str(c)][0]
+            col_evidence = [c for c in df.columns if "Audit" in str(c) or "Evidence" in str(c)]
+            col_evidence = col_evidence[0] if col_evidence else None
+            
+            # Iterate rows to find non-empty issues
+            for idx, row in df.iterrows():
+                issue_text = str(row[col_issue]) if pd.notna(row[col_issue]) else ""
+                action_text = str(row[col_action]) if pd.notna(row[col_action]) else ""
+                
+                # Check if meaningful text (not '0', 'nan', or empty)
+                if len(issue_text) > 3 and issue_text != "0" and issue_text.lower() != "nan":
+                    evidence = str(row[col_evidence]) if col_evidence and pd.notna(row[col_evidence]) else "Course Audit Report"
+                    cqi_list.append({
+                        'issue': issue_text,
+                        'action': action_text if len(action_text) > 3 else "Review syllabus content.",
+                        'evidence': evidence
+                    })
+                    
+        except Exception as e:
+            print(f"Error extracting CQI: {e}")
+            
+    return cqi_list
+
 # --- Main App Interface ---
 
 st.title("📊 ESPAR Report Generator")
@@ -134,23 +169,22 @@ if uploaded_files:
     for uploaded_file in uploaded_files:
         code = extract_course_code(uploaded_file.name)
         if code not in course_data:
-            course_data[code] = {'students': 0, 'pass_rate': 0, 'plo': {}, 'has_dashboard': False}
+            course_data[code] = {'students': 0, 'pass_rate': 0, 'plo': {}, 'cqi': [], 'has_dashboard': False}
             
         fname = uploaded_file.name
         
-        # === EXCEL WORKBOOK LOGIC (The Fix) ===
+        # === EXCEL WORKBOOK LOGIC ===
         if fname.endswith('.xlsx'):
             try:
                 # Read ALL sheets
                 xls = pd.read_excel(uploaded_file, sheet_name=None, header=None)
                 
-                # 1. Find Dashboard Sheet
+                # 1. Dashboard
                 dash_df = None
                 for sheet_name, sheet_df in xls.items():
                     if "Dashboard" in sheet_name or "CRR" in sheet_name:
                         dash_df = sheet_df
                         break
-                
                 if dash_df is not None:
                     studs, rate = extract_dashboard_metrics(dash_df)
                     if studs > 0:
@@ -158,24 +192,33 @@ if uploaded_files:
                         course_data[code]['pass_rate'] = rate
                         course_data[code]['has_dashboard'] = True
                         
-                # 2. Find PLO Sheet
+                # 2. PLO
                 plo_df = None
                 for sheet_name, sheet_df in xls.items():
                     if "Table 3" in sheet_name or "PLO" in sheet_name:
                         plo_df = sheet_df
                         break
-                
                 if plo_df is not None:
                     plos = extract_plo_metrics(plo_df)
                     if plos:
                         course_data[code]['plo'].update(plos)
 
+                # 3. CQI (Table 2)
+                cqi_df = None
+                for sheet_name, sheet_df in xls.items():
+                    if "Table 2" in sheet_name or "CLO" in sheet_name:
+                        cqi_df = sheet_df
+                        break
+                if cqi_df is not None:
+                    cqi_items = extract_cqi_issues(cqi_df)
+                    if cqi_items:
+                        course_data[code]['cqi'].extend(cqi_items)
+
             except Exception as e:
                 st.error(f"Error reading Excel file {fname}: {e}")
 
-        # === CSV LOGIC (Legacy Support) ===
+        # === CSV LOGIC ===
         else: 
-            # If "Dashboard" in filename...
             if "Dashboard" in fname or "CRR" in fname:
                 try:
                     df = pd.read_csv(uploaded_file, header=None)
@@ -184,9 +227,7 @@ if uploaded_files:
                         course_data[code]['students'] = studs
                         course_data[code]['pass_rate'] = rate
                         course_data[code]['has_dashboard'] = True
-                except:
-                    pass
-            # If "Table 3" in filename...
+                except: pass
             elif "Table 3" in fname or "PLO" in fname:
                 try:
                     uploaded_file.seek(0)
@@ -194,8 +235,15 @@ if uploaded_files:
                     plos = extract_plo_metrics(df)
                     if plos:
                         course_data[code]['plo'].update(plos)
-                except:
-                    pass
+                except: pass
+            elif "Table 2" in fname:
+                try:
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, header=None)
+                    cqi_items = extract_cqi_issues(df)
+                    if cqi_items:
+                        course_data[code]['cqi'].extend(cqi_items)
+                except: pass
 
     # 2. Aggregation Logic
     df_courses = []
@@ -205,7 +253,6 @@ if uploaded_files:
     passed_students_cohort = 0
     
     for code, data in course_data.items():
-        # Calculate stats
         studs = pd.to_numeric(data.get('students', 0), errors='coerce')
         if pd.isna(studs): studs = 0
         
@@ -216,7 +263,6 @@ if uploaded_files:
         total_students_cohort += studs
         passed_students_cohort += passed
         
-        # PLO aggregation
         for plo_name, score in data['plo'].items():
             if plo_name not in all_plo_scores:
                 all_plo_scores[plo_name] = []
@@ -229,10 +275,8 @@ if uploaded_files:
             'Students': studs
         })
 
-    # Create DataFrames
     results_df = pd.DataFrame(df_courses)
     
-    # Avoid div by zero
     if total_students_cohort > 0:
         overall_pass_rate = (passed_students_cohort / total_students_cohort) * 100
     elif not results_df.empty:
@@ -249,7 +293,6 @@ if uploaded_files:
         st.metric("Overall Pass Rate", f"{overall_pass_rate:.1f}%")
         st.metric("Total Students", f"{int(total_students_cohort)}")
         
-        # Pie Chart
         fig, ax = plt.subplots()
         labels = ['Pass', 'Fail']
         sizes = [overall_pass_rate, 100 - overall_pass_rate]
@@ -280,11 +323,10 @@ if uploaded_files:
     st.header("📝 Generated Report Text")
     st.info("Copy and paste these sections directly into your ESPAR Word document.")
 
-    # Calculate PLO Averages
     plo_averages = {k: sum(v)/len(v) for k, v in all_plo_scores.items()}
     sorted_plos = sorted(plo_averages.items(), key=lambda x: x[0])
     
-    # Strength/Weakness Logic
+    # Text Generation Logic
     strength_text = "Students showed consistent performance across core modules."
     weakness_text = "No critical failure rates observed."
     
@@ -305,7 +347,7 @@ if uploaded_files:
         if plo_averages[worst_plo] < 50:
             weakness_text = f"Students struggled in **{worst_plo}** (Average: {plo_averages[worst_plo]:.1f}%), falling below the target KPI."
 
-    # 1.0 Executive Summary
+    # 1.0 & 3.1 & 3.2 (Standard Sections)
     st.subheader("1.0 EXECUTIVE SUMMARY")
     exec_summary = f"""
 * **Overall Status:** Satisfactory. The cohort achieved an **Overall Pass Rate of {overall_pass_rate:.1f}%**.
@@ -314,9 +356,7 @@ if uploaded_files:
 """
     st.text_area("1.0 Executive Summary", value=exec_summary, height=150)
 
-    # 3.1 CLO Analysis
     st.subheader("3.1 CLO Analysis (Course Level)")
-    
     fail_list_formatted = ""
     if not high_fail_df.empty:
         for _, row in high_fail_df.iterrows():
@@ -333,9 +373,7 @@ if uploaded_files:
 """
     st.text_area("3.1 CLO Analysis", value=clo_analysis, height=200)
 
-    # 3.2 PLO Analysis
     st.subheader("3.2 PLO Analysis (Programme Level)")
-    
     plo_rows = ""
     for plo, score in sorted_plos:
         status = "ACHIEVED" if score >= 50 else "ATTENTION REQUIRED"
@@ -348,20 +386,29 @@ if uploaded_files:
 """
     st.text_area("3.2 PLO Analysis Table", value=plo_table, height=300)
 
-    # 4.0 Strategic CQI Action Plan (Added Section)
+    # 4.0 Strategic CQI Action Plan (IMPROVED)
     st.subheader("4.0 STRATEGIC CQI ACTION PLAN")
     
     cqi_rows = ""
     
-    # Generate action plan based on weaknesses
-    if not high_fail_df.empty:
-        for _, row in high_fail_df.iterrows():
-            cqi_rows += f"| High Failure Rate in {row['Course Code']} ({row['Fail Rate']:.1f}%) | Conduct remedial workshops covering key topics. | Completed | Attendance List (Appendix A) |\n"
-    
-    if plo_averages:
-        worst_plo = min(plo_averages, key=plo_averages.get)
-        if plo_averages[worst_plo] < 50:
-            cqi_rows += f"| Low Performance in {worst_plo} (Avg: {plo_averages[worst_plo]:.1f}%) | Review assessment methods and introduce practical sessions. | In Progress | New Course Outline (Appendix B) |\n"
+    # 1. Use user-entered CQI from Excel first
+    has_specific_cqi = False
+    for code, data in course_data.items():
+        if data['cqi']:
+            for item in data['cqi']:
+                cqi_rows += f"| {item['issue']} ({code}) | {item['action']} | In Progress | {item['evidence']} |\n"
+            has_specific_cqi = True
+            
+    # 2. Fallback if no specific entries found
+    if not has_specific_cqi:
+        if not high_fail_df.empty:
+            for _, row in high_fail_df.iterrows():
+                cqi_rows += f"| High Failure Rate in {row['Course Code']} ({row['Fail Rate']:.1f}%) | Conduct remedial workshops covering key topics. | Completed | Attendance List (Appendix A) |\n"
+        
+        if plo_averages:
+            worst_plo = min(plo_averages, key=plo_averages.get)
+            if plo_averages[worst_plo] < 50:
+                cqi_rows += f"| Low Performance in {worst_plo} (Avg: {plo_averages[worst_plo]:.1f}%) | Review assessment methods and introduce practical sessions. | In Progress | New Course Outline (Appendix B) |\n"
             
     if not cqi_rows:
         cqi_rows = "| No critical failures observed. | Maintain current teaching strategies. | Completed | Semester Report |\n"
@@ -373,7 +420,6 @@ if uploaded_files:
 """
     st.text_area("4.0 Strategic CQI Action Plan", value=cqi_plan, height=250)
 
-    # 5.0 Conclusion
     st.subheader("5.0 CONCLUSION")
     conclusion = f"""
 The academic session concluded with an **Overall Pass Rate of {overall_pass_rate:.1f}%**. 
