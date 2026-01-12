@@ -20,6 +20,42 @@ st.markdown("""
 
 # --- Helper Functions ---
 
+def get_smart_recommendation(issue_text, course_name=""):
+    """
+    Acts as a 'Smart AI' to generate pedagogical actions based on keywords 
+    in the issue text or course context.
+    """
+    text = (str(issue_text) + " " + str(course_name)).lower()
+    
+    recommendations = {
+        "attendance": "Implement strict attendance monitoring and issue warning letters to chronic absentees.",
+        "late": "Review submission deadlines and enforce strict penalties for late submissions to encourage discipline.",
+        "submit": "Review submission deadlines and enforce strict penalties for late submissions to encourage discipline.",
+        "theory": "Introduce more interactive visual aids and real-world case studies to explain abstract theoretical concepts.",
+        "concept": "Introduce more interactive visual aids and real-world case studies to explain abstract theoretical concepts.",
+        "calculation": "Conduct remedial drills focusing specifically on step-by-step calculation methods.",
+        "math": "Conduct remedial drills focusing specifically on step-by-step calculation methods.",
+        "programming": "Organize 'Code Clinics' where students can get one-on-one debugging help from seniors or lecturers.",
+        "coding": "Organize 'Code Clinics' where students can get one-on-one debugging help from seniors or lecturers.",
+        "drawing": "Host extra studio sessions with live demonstrations to improve technique application.",
+        "sketching": "Host extra studio sessions with live demonstrations to improve technique application.",
+        "design": "Incorporate critique sessions (critique) earlier in the semester to provide formative feedback.",
+        "visual": "Provide more examples of high-quality visual analysis to guide student expectations.",
+        "communication": "Integrate mandatory presentation components in assessments to build confidence and skills.",
+        "english": "Encourage usage of English in class discussions and recommend support workshops.",
+        "group": "Implement a peer-evaluation mechanism to ensure fair contribution in group projects.",
+        "project": "Break down the final project into smaller milestones to monitor progress more effectively.",
+        "software": "Conduct specific lab tutorials focusing on software tools and shortcuts.",
+        "basic": "Conduct 'Back-to-Basics' revision classes to strengthen fundamental understanding."
+    }
+    
+    for key, action in recommendations.items():
+        if key in text:
+            return action
+            
+    # Default generic professional response if no keywords match
+    return "Conduct focused revision classes targeting the specific weak topics identified in the assessment."
+
 def extract_course_code(filename):
     """Attempts to extract a pattern like DMIM1033 from filename."""
     match = re.search(r'([A-Z]{4}\d{4})', filename)
@@ -138,10 +174,16 @@ def extract_cqi_issues(df):
                 
                 # Check if meaningful text (not '0', 'nan', or empty)
                 if len(issue_text) > 3 and issue_text != "0" and issue_text.lower() != "nan":
+                    
+                    # === INTELLIGENT AUTO-FILL ===
+                    # If lecturer wrote the issue but left Action blank (or '0'), generate one.
+                    if len(action_text) < 4 or action_text == "0":
+                        action_text = get_smart_recommendation(issue_text)
+                    
                     evidence = str(row[col_evidence]) if col_evidence and pd.notna(row[col_evidence]) else "Course Audit Report"
                     cqi_list.append({
                         'issue': issue_text,
-                        'action': action_text if len(action_text) > 3 else "Review syllabus content.",
+                        'action': action_text,
                         'evidence': evidence
                     })
                     
@@ -386,8 +428,8 @@ if uploaded_files:
 """
     st.text_area("3.2 PLO Analysis Table", value=plo_table, height=300)
 
-    # 4.0 Strategic CQI Action Plan (IMPROVED)
-    st.subheader("4.0 STRATEGIC CQI ACTION PLAN")
+    # 4.0 Strategic CQI Action Plan (SMART AI VERSION)
+    st.subheader("4.0 STRATEGIC CQI ACTION PLAN (AI-Assisted)")
     
     cqi_rows = ""
     
@@ -399,16 +441,19 @@ if uploaded_files:
                 cqi_rows += f"| {item['issue']} ({code}) | {item['action']} | In Progress | {item['evidence']} |\n"
             has_specific_cqi = True
             
-    # 2. Fallback if no specific entries found
+    # 2. Fallback if no specific entries found (AUTO-GENERATE using Smart Logic)
     if not has_specific_cqi:
         if not high_fail_df.empty:
             for _, row in high_fail_df.iterrows():
-                cqi_rows += f"| High Failure Rate in {row['Course Code']} ({row['Fail Rate']:.1f}%) | Conduct remedial workshops covering key topics. | Completed | Attendance List (Appendix A) |\n"
+                # Try to guess context from code or just generic
+                action = get_smart_recommendation("theory calculation", row['Course Code'])
+                cqi_rows += f"| High Failure Rate in {row['Course Code']} ({row['Fail Rate']:.1f}%) | {action} | Completed | Attendance List (Appendix A) |\n"
         
         if plo_averages:
             worst_plo = min(plo_averages, key=plo_averages.get)
             if plo_averages[worst_plo] < 50:
-                cqi_rows += f"| Low Performance in {worst_plo} (Avg: {plo_averages[worst_plo]:.1f}%) | Review assessment methods and introduce practical sessions. | In Progress | New Course Outline (Appendix B) |\n"
+                action = get_smart_recommendation(worst_plo)
+                cqi_rows += f"| Low Performance in {worst_plo} (Avg: {plo_averages[worst_plo]:.1f}%) | {action} | In Progress | New Course Outline (Appendix B) |\n"
             
     if not cqi_rows:
         cqi_rows = "| No critical failures observed. | Maintain current teaching strategies. | Completed | Semester Report |\n"
