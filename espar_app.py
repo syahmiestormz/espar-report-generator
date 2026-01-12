@@ -145,7 +145,10 @@ def extract_plo_metrics(df):
     return plo_scores
 
 def extract_cqi_issues(df):
-    """Extracts user-entered CQI issues from Table 2 - CLO Analysis."""
+    """
+    Extracts user-entered CQI issues from Table 2 - CLO Analysis.
+    Only includes items where status is FAIL or Score < 50%.
+    """
     cqi_list = [] # [{'issue': '...', 'action': '...', 'evidence': '...'}, ...]
     
     # Locate header row containing 'Issue' and 'Suggestion'
@@ -167,25 +170,51 @@ def extract_cqi_issues(df):
             col_evidence = [c for c in df.columns if "Audit" in str(c) or "Evidence" in str(c)]
             col_evidence = col_evidence[0] if col_evidence else None
             
+            # Identify Pass/Fail or Score columns for filtering
+            col_status = [c for c in df.columns if "Pass" in str(c) or "Met" in str(c)]
+            col_score = [c for c in df.columns if "%" in str(c) or "Score" in str(c)]
+            
             # Iterate rows to find non-empty issues
             for idx, row in df.iterrows():
-                issue_text = str(row[col_issue]) if pd.notna(row[col_issue]) else ""
-                action_text = str(row[col_action]) if pd.notna(row[col_action]) else ""
                 
-                # Check if meaningful text (not '0', 'nan', or empty)
-                if len(issue_text) > 3 and issue_text != "0" and issue_text.lower() != "nan":
+                # --- FILTER LOGIC: Only process if FAILED or < 50% ---
+                is_fail = False
+                
+                # Check 1: Explicit "Fail" or "No" in status column
+                if col_status:
+                    status_val = str(row[col_status[0]]).lower()
+                    if "fail" in status_val or "no" in status_val:
+                        is_fail = True
+                        
+                # Check 2: Score < 50% (0.5)
+                if not is_fail and col_score:
+                    try:
+                        score_val = pd.to_numeric(row[col_score[0]], errors='coerce')
+                        # Handle 0.45 (45%) or 45 (45%)
+                        if score_val <= 1.0: score_val *= 100
+                        if score_val < 50:
+                            is_fail = True
+                    except:
+                        pass
+                
+                # Only proceed if it is a failure case
+                if is_fail:
+                    issue_text = str(row[col_issue]) if pd.notna(row[col_issue]) else ""
+                    action_text = str(row[col_action]) if pd.notna(row[col_action]) else ""
                     
-                    # === INTELLIGENT AUTO-FILL ===
-                    # If lecturer wrote the issue but left Action blank (or '0'), generate one.
-                    if len(action_text) < 4 or action_text == "0":
-                        action_text = get_smart_recommendation(issue_text)
-                    
-                    evidence = str(row[col_evidence]) if col_evidence and pd.notna(row[col_evidence]) else "Course Audit Report"
-                    cqi_list.append({
-                        'issue': issue_text,
-                        'action': action_text,
-                        'evidence': evidence
-                    })
+                    # Check if meaningful text (not '0', 'nan', or empty)
+                    if len(issue_text) > 3 and issue_text != "0" and issue_text.lower() != "nan":
+                        
+                        # === INTELLIGENT AUTO-FILL ===
+                        if len(action_text) < 4 or action_text == "0":
+                            action_text = get_smart_recommendation(issue_text)
+                        
+                        evidence = str(row[col_evidence]) if col_evidence and pd.notna(row[col_evidence]) else "Course Audit Report"
+                        cqi_list.append({
+                            'issue': issue_text,
+                            'action': action_text,
+                            'evidence': evidence
+                        })
                     
         except Exception as e:
             print(f"Error extracting CQI: {e}")
@@ -428,12 +457,12 @@ if uploaded_files:
 """
     st.text_area("3.2 PLO Analysis Table", value=plo_table, height=300)
 
-    # 4.0 Strategic CQI Action Plan (SMART AI VERSION)
+    # 4.0 Strategic CQI Action Plan (SMART AI VERSION + FILTERED)
     st.subheader("4.0 STRATEGIC CQI ACTION PLAN (AI-Assisted)")
     
     cqi_rows = ""
     
-    # 1. Use user-entered CQI from Excel first
+    # 1. Use user-entered CQI from Excel first (FILTERED BY FAIL)
     has_specific_cqi = False
     for code, data in course_data.items():
         if data['cqi']:
