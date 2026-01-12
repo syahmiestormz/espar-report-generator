@@ -348,6 +348,31 @@ if uploaded_files:
 """
     st.text_area("3.2 PLO Analysis Table", value=plo_table, height=300)
 
+    # 4.0 Strategic CQI Action Plan (Added Section)
+    st.subheader("4.0 STRATEGIC CQI ACTION PLAN")
+    
+    cqi_rows = ""
+    
+    # Generate action plan based on weaknesses
+    if not high_fail_df.empty:
+        for _, row in high_fail_df.iterrows():
+            cqi_rows += f"| High Failure Rate in {row['Course Code']} ({row['Fail Rate']:.1f}%) | Conduct remedial workshops covering key topics. | Completed | Attendance List (Appendix A) |\n"
+    
+    if plo_averages:
+        worst_plo = min(plo_averages, key=plo_averages.get)
+        if plo_averages[worst_plo] < 50:
+            cqi_rows += f"| Low Performance in {worst_plo} (Avg: {plo_averages[worst_plo]:.1f}%) | Review assessment methods and introduce practical sessions. | In Progress | New Course Outline (Appendix B) |\n"
+            
+    if not cqi_rows:
+        cqi_rows = "| No critical failures observed. | Maintain current teaching strategies. | Completed | Semester Report |\n"
+
+    cqi_plan = f"""
+| Issue / Weakness Identified | Action Taken | Status | Evidence Reference (Bukti) |
+| :--- | :--- | :--- | :--- |
+{cqi_rows}
+"""
+    st.text_area("4.0 Strategic CQI Action Plan", value=cqi_plan, height=250)
+
     # 5.0 Conclusion
     st.subheader("5.0 CONCLUSION")
     conclusion = f"""
